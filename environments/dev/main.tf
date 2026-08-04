@@ -124,15 +124,11 @@ resource "aws_security_group" "dev_restricted_sg" {
 
 data "aws_ami" "ubuntu" {
   most_recent = true
+  owners      = ["self"]
   filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+    name   = "image-id"
+    values = ["ami-04df1ccf0de76ad26"]
   }
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-  owners = ["099720109477"] # Canonical
 }
 
 resource "aws_iam_role" "ec2_ssm_role" {
@@ -200,6 +196,10 @@ resource "aws_instance" "dev_ec2" {
     Name        = "dev-ec2-instance"
     Environment = "dev"
   }
+  lifecycle {
+    # Debe estar en false para que Terraform te permita destruir la infraestructura
+    prevent_destroy = false
+  }
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -226,23 +226,32 @@ resource "aws_db_subnet_group" "rds_subnet_group" {
 }
 
 resource "aws_db_instance" "dev_mysql" {
-  identifier             = "dev-mysql-db"
-  allocated_storage      = 20
-  max_allocated_storage  = 50 # Auto-scaling de almacenamiento básico para pruebas
-  engine                 = "mysql"
-  engine_version         = "8.0"
-  instance_class         = "db.t3.micro" # Capa gratuita / Dev
-  db_name                = "blessedbox_dev"
-  username               = "admin"
-  password               = var.db_password # Cambiar mediante variables secretas en entornos reales
-  db_subnet_group_name   = aws_db_subnet_group.rds_subnet_group.name
-  vpc_security_group_ids = [aws_security_group.dev_restricted_sg.id]
-  publicly_accessible    = true # Requerido si te conectas directo desde tu PC, mitigado por el SG restrictivo
-  skip_final_snapshot    = true # Evita retenciones costosas al destruir el entorno de pruebas
+  identifier                = "dev-mysql-db"
+  allocated_storage         = 20
+  max_allocated_storage     = 50 # Auto-scaling de almacenamiento básico para pruebas
+  engine                    = "mysql"
+  engine_version            = "8.0"
+  instance_class            = "db.t3.micro" # Capa gratuita / Dev
+  snapshot_identifier       = "rds-blessed-box-dev-snapshot"
+  db_name                   = "blessedbox_dev"
+  username                  = "admin"
+  password                  = var.db_password # Cambiar mediante variables secretas en entornos reales
+  db_subnet_group_name      = aws_db_subnet_group.rds_subnet_group.name
+  vpc_security_group_ids    = [aws_security_group.dev_restricted_sg.id]
+  publicly_accessible       = true # Requerido si te conectas directo desde tu PC, mitigado por el SG restrictivo
+  skip_final_snapshot       = true # Evita retenciones costosas al destruir el entorno de pruebas
+  final_snapshot_identifier = "rds-blessed-box-dev-snapshot"
 
   tags = {
     Name        = "dev-mysql-rds"
     Environment = "dev"
+  }
+  lifecycle {
+    ignore_changes = [
+      username,
+      password,
+      db_name
+    ]
   }
 }
 
