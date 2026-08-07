@@ -232,8 +232,8 @@ resource "aws_db_instance" "dev_mysql" {
   engine                    = "mysql"
   engine_version            = "8.0"
   instance_class            = "db.t3.micro" # Capa gratuita / Dev
-  snapshot_identifier       = "rds-blessed-box-dev-snapshot"
-  db_name                   = "blessedbox_dev"
+  snapshot_identifier       = "blessed-box-agosto-2026"
+  # db_name                   = "blessedbox_dev"
   username                  = "admin"
   password                  = var.db_password # Cambiar mediante variables secretas en entornos reales
   db_subnet_group_name      = aws_db_subnet_group.rds_subnet_group.name
