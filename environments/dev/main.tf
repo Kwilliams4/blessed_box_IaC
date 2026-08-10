@@ -7,6 +7,11 @@ variable "my_ip" {
   sensitive   = true
   description = "Tu IP pública para acceso administrativo"
 }
+variable "dev_ip" {
+  type        = string
+  sensitive   = true
+  description = "IP pública para acceso de desarrollo"
+}
 
 variable "db_password" {
   type        = string
@@ -94,7 +99,7 @@ resource "aws_security_group" "dev_restricted_sg" {
     from_port   = 3306
     to_port     = 3306
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip]
+    cidr_blocks = [var.my_ip, var.dev_ip]
   }
   ingress {
     description     = "Node.js desde EC2 hacia MySQL"
@@ -169,7 +174,7 @@ resource "aws_security_group" "ec2_sg" {
     from_port   = 4000
     to_port     = 4000
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip]
+    cidr_blocks = [var.my_ip, var.dev_ip]
   }
 
   egress {
@@ -226,13 +231,13 @@ resource "aws_db_subnet_group" "rds_subnet_group" {
 }
 
 resource "aws_db_instance" "dev_mysql" {
-  identifier                = "dev-mysql-db"
-  allocated_storage         = 20
-  max_allocated_storage     = 50 # Auto-scaling de almacenamiento básico para pruebas
-  engine                    = "mysql"
-  engine_version            = "8.0"
-  instance_class            = "db.t3.micro" # Capa gratuita / Dev
-  snapshot_identifier       = "blessed-box-7-agosto-2026"
+  identifier            = "dev-mysql-db"
+  allocated_storage     = 20
+  max_allocated_storage = 50 # Auto-scaling de almacenamiento básico para pruebas
+  engine                = "mysql"
+  engine_version        = "8.0"
+  instance_class        = "db.t3.micro" # Capa gratuita / Dev
+  snapshot_identifier   = "blessed-box-7-agosto-2026"
   # db_name                   = "blessedbox_dev"
   username                  = "admin"
   password                  = var.db_password # Cambiar mediante variables secretas en entornos reales
