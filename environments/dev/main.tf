@@ -163,6 +163,39 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_ssm_role.name
 }
 
+# Inline policy granting minimal write permissions to DynamoDB and send permissions to SQS
+resource "aws_iam_role_policy" "ec2_app_policy" {
+  name = "ec2-app-dynamo-sqs-policy"
+  role = aws_iam_role.ec2_ssm_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:BatchWriteItem"
+        ]
+        Resource = [
+          aws_dynamodb_table.dev_sessions.arn,
+          aws_dynamodb_table.dev_otp.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage",
+          "sqs:SendMessageBatch"
+        ]
+        Resource = aws_sqs_queue.dev_queue.arn
+      }
+    ]
+  })
+}
+
 resource "aws_security_group" "ec2_sg" {
   name        = "mi-app-ec2-sg"
   description = "Security Group para la instancia EC2 de Node.js"
@@ -277,6 +310,26 @@ resource "aws_dynamodb_table" "dev_sessions" {
 
   tags = {
     Name        = "dev-dynamodb-sessions"
+    Environment = "dev"
+  }
+}
+resource "aws_dynamodb_table" "dev_otp" {
+  name         = "dev-app-otp"
+  billing_mode = "PAY_PER_REQUEST" # Costo cero si no se usa (On-Demand)
+  hash_key     = "userId"
+
+  attribute {
+    name = "userId"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "TimeToLive"
+    enabled        = true
+  }
+
+  tags = {
+    Name        = "dev-dynamodb-otp"
     Environment = "dev"
   }
 }
