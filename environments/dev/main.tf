@@ -465,3 +465,8 @@ output "api_gateway_url" {
   value       = aws_apigatewayv2_api.dev_api.api_endpoint
   description = "URL publica base de tu API Gateway"
 }
+
+output "sqs_queue_url"{
+  value       = aws_sqs_queue.dev_queue.id
+  description = "URL de la cola SQS para pruebas de mensajería"
+}
