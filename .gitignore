@@ -5,6 +5,9 @@
 *.tfstate
 *.tfstate.*
 
+# Ignorar el archivo comprimido de la función Lambda
+*.zip
+
 # Crash log files
 crash.log
 crash.*.log
