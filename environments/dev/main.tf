@@ -132,7 +132,7 @@ data "aws_ami" "ubuntu" {
   owners      = ["self"]
   filter {
     name   = "image-id"
-    values = ["ami-04df1ccf0de76ad26"]
+    values = ["ami-099b38cf081b2de98"]
   }
 }
 
@@ -439,10 +439,16 @@ resource "aws_iam_role_policy_attachment" "lambda_sqs_attach" {
   role       = aws_iam_role.lambda_exec_role.name
   policy_arn = aws_iam_policy.lambda_sqs_policy.arn
 }
-
+# Terraform busca tu código suelto en temp/ y crea el ZIP automáticamente
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/temp"
+  output_path = "${path.module}/lambda.zip"
+}
 
 resource "aws_lambda_function" "dev_lambda" {
-  filename         = "lambda.zip"
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   function_name    = "sqs_message_processor-dev"
   role             = aws_iam_role.lambda_exec_role.arn
   handler          = "index.handler"
