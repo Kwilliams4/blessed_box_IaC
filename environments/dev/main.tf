@@ -343,8 +343,10 @@ resource "aws_sns_topic" "dev_topic" {
 }
 
 resource "aws_sqs_queue" "dev_queue" {
-  name                      = "dev-processing-queue"
-  message_retention_seconds = 86400 # 1 día de retención es óptimo para dev
+  name                       = "dev-processing-queue"
+  message_retention_seconds  = 86400 # 1 día de retención es óptimo para dev
+  max_message_size           = 262144
+  visibility_timeout_seconds = 90
 }
 
 resource "aws_sns_topic_subscription" "sns_to_sqs" {
@@ -390,30 +392,73 @@ resource "aws_iam_role" "lambda_exec_role" {
     }]
   })
 }
-
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
   role       = aws_iam_role.lambda_exec_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Código dummy integrado para inicializar la Lambda sin archivos externos complicados
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  output_path = "${path.module}/temp/lambda.zip"
+resource "aws_iam_policy" "lambda_sqs_policy" {
+  name        = "lambda-sqs-permissions"
+  description = "Allows Lambda to poll messages from SQS"
 
-  source {
-    content  = "exports.handler = async (event) => { return { statusCode: 200, body: JSON.stringify('Dev API Online') }; };"
-    filename = "index.js"
-  }
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = aws_sqs_queue.dev_queue.arn
+      },
+      # NUEVO: Permiso para enviar correos con SES
+      {
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail"
+        ]
+        Resource = "*" # SES requiere "*" para acciones de envío, controlado por la identidad del remitente
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      }
+
+    ]
+  })
+}
+resource "aws_iam_role_policy_attachment" "lambda_sqs_attach" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = aws_iam_policy.lambda_sqs_policy.arn
 }
 
+
 resource "aws_lambda_function" "dev_lambda" {
-  filename         = data.archive_file.lambda_zip.output_path
-  function_name    = "dev-backend-function"
+  filename         = "lambda_zip"
+  function_name    = "sqs_message_processor-dev"
   role             = aws_iam_role.lambda_exec_role.arn
   handler          = "index.handler"
   runtime          = "nodejs18.x"
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  environment {
+    variables = {
+      SENDER_EMAIL = "blessedbox789@gmail.com" # Este correo DEBE estar verificado en AWS SES
+    }
+  }
+}
+resource "aws_lambda_event_source_mapping" "sqs_trigger" {
+  event_source_arn = aws_sqs_queue.dev_queue.arn
+  function_name    = aws_lambda_function.dev_lambda.arn
+  batch_size       = 10 # Number of records sent per invocation
+  enabled          = true
 }
 
 resource "aws_apigatewayv2_api" "dev_api" {
@@ -466,7 +511,7 @@ output "api_gateway_url" {
   description = "URL publica base de tu API Gateway"
 }
 
-output "sqs_queue_url"{
+output "sqs_queue_url" {
   value       = aws_sqs_queue.dev_queue.id
   description = "URL de la cola SQS para pruebas de mensajería"
 }
