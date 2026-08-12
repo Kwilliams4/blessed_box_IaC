@@ -132,7 +132,7 @@ data "aws_ami" "ubuntu" {
   owners      = ["self"]
   filter {
     name   = "image-id"
-    values = ["ami-099b38cf081b2de98"]
+    values = ["ami-0ded17a09cc1c16f6"]
   }
 }
 
@@ -175,6 +175,7 @@ resource "aws_iam_role_policy" "ec2_app_policy" {
         Effect = "Allow"
         Action = [
           "dynamodb:PutItem",
+          "dynamodb:GetItem",
           "dynamodb:UpdateItem",
           "dynamodb:DeleteItem",
           "dynamodb:BatchWriteItem"
@@ -296,10 +297,10 @@ resource "aws_db_instance" "dev_mysql" {
 resource "aws_dynamodb_table" "dev_sessions" {
   name         = "dev-app-sessions"
   billing_mode = "PAY_PER_REQUEST" # Costo cero si no se usa (On-Demand)
-  hash_key     = "SessionId"
+  hash_key     = "sessionId"
 
   attribute {
-    name = "SessionId"
+    name = "sessionId"
     type = "S"
   }
 
