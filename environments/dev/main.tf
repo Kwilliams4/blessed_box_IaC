@@ -286,7 +286,6 @@ resource "aws_db_instance" "dev_mysql" {
     Environment = "dev"
   }
   lifecycle {
-    prevent_destroy = true
     ignore_changes = [
       username,
       password,
