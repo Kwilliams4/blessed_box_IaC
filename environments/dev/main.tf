@@ -132,7 +132,7 @@ data "aws_ami" "ubuntu" {
   owners      = ["self"]
   filter {
     name   = "image-id"
-    values = ["ami-0ded17a09cc1c16f6"]
+    values = ["ami-0408dcebefd8b7b3a"]
   }
 }
 
@@ -163,7 +163,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_ssm_role.name
 }
 
-# Inline policy granting minimal write permissions to DynamoDB and send permissions to SQS
+# Inline policy granting minimal write permissions to DynamoDB, send permissions to SQS and (List, Get, Put) Objects on S3 Bucket.
 resource "aws_iam_role_policy" "ec2_app_policy" {
   name = "ec2-app-dynamo-sqs-policy"
   role = aws_iam_role.ec2_ssm_role.id
@@ -192,6 +192,14 @@ resource "aws_iam_role_policy" "ec2_app_policy" {
           "sqs:SendMessageBatch"
         ]
         Resource = aws_sqs_queue.dev_queue.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+        ]
+        Resource = "${aws_s3_bucket.dev_bucket.arn}/*"
       }
     ]
   })
@@ -271,7 +279,7 @@ resource "aws_db_instance" "dev_mysql" {
   engine                = "mysql"
   engine_version        = "8.0"
   instance_class        = "db.t3.micro" # Capa gratuita / Dev
-  snapshot_identifier   = "blessed-box-7-agosto-2026"
+  snapshot_identifier   = "blessed-box-22-agosto"
   # db_name                   = "blessedbox_dev"
   username                  = "admin"
   password                  = var.db_password # Cambiar mediante variables secretas en entornos reales
@@ -297,10 +305,10 @@ resource "aws_db_instance" "dev_mysql" {
 resource "aws_dynamodb_table" "dev_sessions" {
   name         = "dev-app-sessions"
   billing_mode = "PAY_PER_REQUEST" # Costo cero si no se usa (On-Demand)
-  hash_key     = "sessionId"
+  hash_key     = "userId"
 
   attribute {
-    name = "sessionId"
+    name = "userId"
     type = "S"
   }
 
