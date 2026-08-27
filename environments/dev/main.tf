@@ -132,7 +132,7 @@ data "aws_ami" "ubuntu" {
   owners      = ["self"]
   filter {
     name   = "image-id"
-    values = ["ami-0408dcebefd8b7b3a"]
+    values = ["ami-049830cefe34aa9ae"]
   }
 }
 
@@ -279,7 +279,7 @@ resource "aws_db_instance" "dev_mysql" {
   engine                = "mysql"
   engine_version        = "8.0"
   instance_class        = "db.t3.micro" # Capa gratuita / Dev
-  snapshot_identifier   = "blessed-box-22-agosto"
+  snapshot_identifier   = "blessed-box-24-agosto"
   # db_name                   = "blessedbox_dev"
   username                  = "admin"
   password                  = var.db_password # Cambiar mediante variables secretas en entornos reales
@@ -452,7 +452,7 @@ resource "aws_iam_role_policy_attachment" "lambda_sqs_attach" {
 data "archive_file" "lambda_zip" {
   type        = "zip"
   source_dir  = "${path.module}/temp"
-  output_path = "${path.module}/lambda.zip"
+  output_path = "${path.module}/../../build/lambda.zip"
 }
 
 resource "aws_lambda_function" "dev_lambda" {
