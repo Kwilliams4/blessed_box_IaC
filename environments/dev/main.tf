@@ -261,6 +261,9 @@ resource "aws_s3_bucket" "dev_bucket" {
     Name        = "dev-s3-bucket"
     Environment = "dev"
   }
+   lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_db_subnet_group" "rds_subnet_group" {
@@ -528,4 +531,8 @@ output "api_gateway_url" {
 output "sqs_queue_url" {
   value       = aws_sqs_queue.dev_queue.id
   description = "URL de la cola SQS para pruebas de mensajería"
+}
+output "s3_bucket_name" {
+  description = "Name of the S3 bucket"
+  value       = aws_s3_bucket.dev_bucket.bucket
 }
