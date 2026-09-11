@@ -28,7 +28,10 @@ resource "aws_iam_role" "github_actions" {
           }
 
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:BlessedBox-DevTeam/Blessed-Box-BackEnd:ref:refs/heads/main"
+            "token.actions.githubusercontent.com:sub" : [
+              "repo:BlessedBox-DevTeam/Blessed-Box-BackEnd:ref:refs/heads/main",
+              "repo:BlessedBox-DevTeam/Blessed-Box-BackEnd:ref:refs/heads/development"
+            ]
           }
         }
       }
