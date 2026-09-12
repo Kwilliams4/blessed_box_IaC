@@ -1,9 +1,14 @@
-import { userRegistrationHandler, otpResendHandler } from "./handlers.js";
+import {
+  userRegistrationHandler,
+  otpResendHandler,
+  transactionConfirmationHandler
+} from "./handlers.js";
 
 // Diccionario que mapea el string del eventType con su función correspondiente
 const EVENT_REGISTRY = {
   USER_REGISTRATION: userRegistrationHandler,
-  OTP_RESEND: otpResendHandler
+  OTP_RESEND: otpResendHandler,
+  TRANSACTION_CONFIRMATION: transactionConfirmationHandler
 };
 
 export const handler = async (event) => {
