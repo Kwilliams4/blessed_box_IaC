@@ -19,9 +19,17 @@ variable "db_password" {
   description = "Contraseña para la base de datos RDS"
 }
 
+variable "expiry_table_name" {
+  type        = string
+  default     = "access_codes"
+  description = "Tabla MySQL que contiene la columna expires_at"
+}
+
 data "aws_availability_zones" "available" {
   state = "available"
 }
+
+data "aws_region" "current" {}
 
 resource "aws_vpc" "dev_vpc" {
   cidr_block           = "10.0.0.0/16"
@@ -107,6 +115,13 @@ resource "aws_security_group" "dev_restricted_sg" {
     to_port         = 3306
     protocol        = "tcp"
     security_groups = [aws_security_group.ec2_sg.id]
+  }
+  ingress {
+    description     = "Lambda de expiración hacia MySQL"
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.expiry_lambda_sg.id]
   }
 
   # Salida libre a internet para actualizaciones de paquetes
@@ -227,6 +242,55 @@ resource "aws_security_group" "ec2_sg" {
   }
 }
 
+resource "aws_security_group" "expiry_lambda_sg" {
+  name        = "dev-expiry-lambda-sg"
+  description = "Permite que la Lambda de expiración se conecte a MySQL"
+  vpc_id      = aws_vpc.dev_vpc.id
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+}
+
+resource "aws_security_group" "secretsmanager_endpoint_sg" {
+  name        = "dev-secretsmanager-endpoint-sg"
+  description = "Permite a la Lambda de expiración leer Secrets Manager"
+  vpc_id      = aws_vpc.dev_vpc.id
+
+  ingress {
+    description     = "HTTPS desde la Lambda de expiración"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.expiry_lambda_sg.id]
+  }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+}
+
+resource "aws_vpc_endpoint" "secretsmanager" {
+  vpc_id              = aws_vpc.dev_vpc.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = [aws_subnet.dev_public_1.id, aws_subnet.dev_public_2.id]
+  security_group_ids  = [aws_security_group.secretsmanager_endpoint_sg.id]
+
+  tags = {
+    Name        = "dev-secretsmanager-endpoint"
+    Environment = "dev"
+  }
+}
 
 resource "aws_instance" "dev_ec2" {
   ami                    = data.aws_ami.ubuntu.id
@@ -261,7 +325,7 @@ resource "aws_s3_bucket" "dev_bucket" {
     Name        = "dev-s3-bucket"
     Environment = "dev"
   }
-   lifecycle {
+  lifecycle {
     prevent_destroy = true
   }
 }
@@ -302,6 +366,17 @@ resource "aws_db_instance" "dev_mysql" {
       password,
       db_name
     ]
+  }
+}
+
+resource "aws_secretsmanager_secret" "dev_db_credentials" {
+  name                    = "dev/rds/credentials"
+  description             = "Credenciales de conexión de la base de datos dev"
+  recovery_window_in_days = 7
+
+  tags = {
+    Name        = "dev-rds-credentials"
+    Environment = "dev"
   }
 }
 
@@ -451,6 +526,7 @@ resource "aws_iam_role_policy_attachment" "lambda_sqs_attach" {
   role       = aws_iam_role.lambda_exec_role.name
   policy_arn = aws_iam_policy.lambda_sqs_policy.arn
 }
+
 # Terraform busca tu código suelto en temp/ y crea el ZIP automáticamente
 data "archive_file" "lambda_zip" {
   type        = "zip"
@@ -509,6 +585,90 @@ resource "aws_lambda_permission" "api_gw_permission" {
   source_arn    = "${aws_apigatewayv2_api.dev_api.execution_arn}/*/*"
 }
 
+resource "aws_iam_role" "expiry_lambda_exec_role" {
+  name = "dev-expiry-lambda-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "expiry_lambda_logs" {
+  role       = aws_iam_role.expiry_lambda_exec_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "expiry_lambda_vpc_access" {
+  role       = aws_iam_role.expiry_lambda_exec_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+resource "aws_iam_role_policy" "expiry_lambda_secret_access" {
+  name = "dev-expiry-lambda-secret-access"
+  role = aws_iam_role.expiry_lambda_exec_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"]
+      Resource = aws_secretsmanager_secret.dev_db_credentials.arn
+    }]
+  })
+}
+
+data "archive_file" "expiry_lambda_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/expiry_lambda"
+  output_path = "${path.module}/../../build/expiry-lambda.zip"
+}
+
+resource "aws_lambda_function" "expiry_lambda" {
+  filename         = data.archive_file.expiry_lambda_zip.output_path
+  source_code_hash = data.archive_file.expiry_lambda_zip.output_base64sha256
+  function_name    = "update-expiration-dev"
+  role             = aws_iam_role.expiry_lambda_exec_role.arn
+  handler          = "index.handler"
+  runtime          = "nodejs18.x"
+  timeout          = 30
+
+  vpc_config {
+    subnet_ids         = [aws_subnet.dev_public_1.id, aws_subnet.dev_public_2.id]
+    security_group_ids = [aws_security_group.expiry_lambda_sg.id]
+  }
+
+  environment {
+    variables = {
+      DB_SECRET_ARN = aws_secretsmanager_secret.dev_db_credentials.arn
+      EXPIRY_TABLE  = var.expiry_table_name
+    }
+  }
+}
+
+resource "aws_cloudwatch_event_rule" "expiry_schedule" {
+  name                = "dev-expiry-midnight"
+  description         = "Actualiza expires_at según la medianoche local de cada RC"
+  schedule_expression = "rate(15 minutes)"
+}
+
+resource "aws_cloudwatch_event_target" "expiry_lambda" {
+  rule = aws_cloudwatch_event_rule.expiry_schedule.name
+  arn  = aws_lambda_function.expiry_lambda.arn
+}
+
+resource "aws_lambda_permission" "eventbridge_expiry" {
+  statement_id  = "AllowEventBridgeInvokeExpiry"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.expiry_lambda.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.expiry_schedule.arn
+}
+
 # ---------------------------------------------------------------------------------------------------------------------
 # OUTPUTS
 # ---------------------------------------------------------------------------------------------------------------------
@@ -535,4 +695,9 @@ output "sqs_queue_url" {
 output "s3_bucket_name" {
   description = "Name of the S3 bucket"
   value       = aws_s3_bucket.dev_bucket.bucket
+}
+
+output "db_credentials_secret_arn" {
+  description = "ARN del secreto con las credenciales de RDS"
+  value       = aws_secretsmanager_secret.dev_db_credentials.arn
 }
