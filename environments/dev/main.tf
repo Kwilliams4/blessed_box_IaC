@@ -543,7 +543,7 @@ resource "aws_lambda_function" "dev_lambda" {
   runtime          = "nodejs18.x"
   environment {
     variables = {
-      SENDER_EMAIL = "blessedbox789@gmail.com" # Este correo DEBE estar verificado en AWS SES
+      SENDER_EMAIL = "noreply@blessedbox.org" # Este correo DEBE estar verificado en AWS SES
     }
   }
 }
