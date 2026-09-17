@@ -117,7 +117,7 @@ resource "aws_security_group" "dev_restricted_sg" {
     security_groups = [aws_security_group.ec2_sg.id]
   }
   ingress {
-    description     = "Lambda de expiración hacia MySQL"
+    description     = "Expiry Lambda to MySQL"
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
@@ -244,7 +244,7 @@ resource "aws_security_group" "ec2_sg" {
 
 resource "aws_security_group" "expiry_lambda_sg" {
   name        = "dev-expiry-lambda-sg"
-  description = "Permite que la Lambda de expiración se conecte a MySQL"
+  description = "Allows expiry Lambda to connect to MySQL"
   vpc_id      = aws_vpc.dev_vpc.id
 
   egress {
@@ -258,11 +258,11 @@ resource "aws_security_group" "expiry_lambda_sg" {
 
 resource "aws_security_group" "secretsmanager_endpoint_sg" {
   name        = "dev-secretsmanager-endpoint-sg"
-  description = "Permite a la Lambda de expiración leer Secrets Manager"
+  description = "Allows expiry Lambda to read Secrets Manager"
   vpc_id      = aws_vpc.dev_vpc.id
 
   ingress {
-    description     = "HTTPS desde la Lambda de expiración"
+    description     = "HTTPS from expiry Lambda"
     from_port       = 443
     to_port         = 443
     protocol        = "tcp"

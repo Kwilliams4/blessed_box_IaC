@@ -136,12 +136,14 @@ export const handler = async () => {
 
     console.log(
       JSON.stringify({
+        selectedRows: rows.length,
         affectedRows,
         updates
       })
     );
 
     return {
+      selectedRows: rows.length,
       affectedRows,
       updates
     };
