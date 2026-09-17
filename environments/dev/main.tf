@@ -464,7 +464,7 @@ resource "aws_sqs_queue_policy" "dev_queue_policy" {
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
-# 5. SERVERLESS & API GATEWAY (Lambda & API Gateway HTTP)
+# 5. SERVERLESS (Lambda)
 # ---------------------------------------------------------------------------------------------------------------------
 
 resource "aws_iam_role" "lambda_exec_role" {
@@ -552,37 +552,6 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   function_name    = aws_lambda_function.dev_lambda.arn
   batch_size       = 10 # Number of records sent per invocation
   enabled          = true
-}
-
-resource "aws_apigatewayv2_api" "dev_api" {
-  name          = "dev-http-api"
-  protocol_type = "HTTP"
-}
-
-resource "aws_apigatewayv2_integration" "api_lambda_integration" {
-  api_id           = aws_apigatewayv2_api.dev_api.id
-  integration_type = "AWS_PROXY"
-  integration_uri  = aws_lambda_function.dev_lambda.invoke_arn
-}
-
-resource "aws_apigatewayv2_route" "api_route" {
-  api_id    = aws_apigatewayv2_api.dev_api.id
-  route_key = "ANY /{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.api_lambda_integration.id}"
-}
-
-resource "aws_apigatewayv2_stage" "dev_stage" {
-  api_id      = aws_apigatewayv2_api.dev_api.id
-  name        = "$default"
-  auto_deploy = true
-}
-
-resource "aws_lambda_permission" "api_gw_permission" {
-  statement_id  = "AllowAPIGatewayInvoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.dev_lambda.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.dev_api.execution_arn}/*/*"
 }
 
 resource "aws_iam_role" "expiry_lambda_exec_role" {
@@ -681,11 +650,6 @@ output "ec2_public_ip" {
 output "rds_endpoint" {
   value       = aws_db_instance.dev_mysql.endpoint
   description = "Dirección de conexión para tu base de datos MySQL"
-}
-
-output "api_gateway_url" {
-  value       = aws_apigatewayv2_api.dev_api.api_endpoint
-  description = "URL publica base de tu API Gateway"
 }
 
 output "sqs_queue_url" {
