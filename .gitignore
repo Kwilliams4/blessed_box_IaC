@@ -1,6 +1,9 @@
 # Local .terraform directories
 .terraform/
 
+# Node.js dependencies used to build Lambda ZIPs
+node_modules/
+
 # .tfstate files
 *.tfstate
 *.tfstate.*
