@@ -2,12 +2,22 @@ import {
   GetSecretValueCommand,
   SecretsManagerClient
 } from "@aws-sdk/client-secrets-manager";
+import crypto from "node:crypto";
 import { DateTime } from "luxon";
 import mysql from "mysql2/promise";
 
 const requiredEnvironmentVariables = ["DB_SECRET_ARN", "EXPIRY_TABLE"];
+const ACCESS_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const ACCESS_CODE_LENGTH = 6;
 
 const secretsManager = new SecretsManagerClient({});
+const generateAccessCode = () => {
+  const randomBytes = crypto.randomBytes(ACCESS_CODE_LENGTH);
+  return Array.from(
+    randomBytes,
+    (byte) => ACCESS_CODE_ALPHABET[byte % ACCESS_CODE_ALPHABET.length]
+  ).join("");
+};
 
 const getNextUtcMidnight = (timezone) => {
   const nextMidnight = DateTime.now()
@@ -112,19 +122,24 @@ export const handler = async () => {
     try {
       for (const [timezone, ids] of rowsByTimezone) {
         const expiresAt = getNextUtcMidnight(timezone);
-        const placeholders = ids.map(() => "?").join(", ");
-        const [result] = await connection.execute(
-          `UPDATE \`${process.env.EXPIRY_TABLE}\`
-           SET expires_at = ?
-           WHERE id IN (${placeholders})`,
-          [expiresAt, ...ids]
-        );
+        let timezoneAffectedRows = 0;
 
-        affectedRows += result.affectedRows;
+        for (const id of ids) {
+          const [result] = await connection.execute(
+            `UPDATE \`${process.env.EXPIRY_TABLE}\`
+             SET expires_at = ?, code = ?
+             WHERE id = ?`,
+            [expiresAt, generateAccessCode(), id]
+          );
+
+          timezoneAffectedRows += result.affectedRows;
+        }
+
+        affectedRows += timezoneAffectedRows;
         updates.push({
           timezone,
           expiresAt: expiresAt.toISOString(),
-          affectedRows: result.affectedRows
+          affectedRows: timezoneAffectedRows
         });
       }
 
