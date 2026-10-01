@@ -25,6 +25,22 @@ variable "expiry_table_name" {
   description = "Tabla MySQL que contiene la columna expires_at"
 }
 
+variable "alb_certificate_arn" {
+  type        = string
+  description = "ARN de un certificado ACM emitido para el dominio de la API dev"
+}
+
+variable "alb_domain_name" {
+  type        = string
+  description = "Dominio DNS que apuntara al ALB de desarrollo"
+}
+
+variable "alb_health_check_path" {
+  type        = string
+  default     = "/health"
+  description = "Ruta HTTP que el ALB usa para verificar la salud de Node.js"
+}
+
 data "aws_availability_zones" "available" {
   state = "available"
 }
@@ -95,6 +111,73 @@ resource "aws_route_table_association" "pub_2" {
   route_table_id = aws_route_table.dev_public_rt.id
 }
 
+resource "aws_subnet" "dev_private_1" {
+  vpc_id            = aws_vpc.dev_vpc.id
+  cidr_block        = "10.0.11.0/24"
+  availability_zone = data.aws_availability_zones.available.names[0]
+
+  tags = {
+    Name        = "dev-private-subnet-1"
+    Environment = "dev"
+  }
+}
+
+resource "aws_subnet" "dev_private_2" {
+  vpc_id            = aws_vpc.dev_vpc.id
+  cidr_block        = "10.0.12.0/24"
+  availability_zone = data.aws_availability_zones.available.names[1]
+
+  tags = {
+    Name        = "dev-private-subnet-2"
+    Environment = "dev"
+  }
+}
+
+resource "aws_eip" "dev_nat" {
+  domain = "vpc"
+
+  tags = {
+    Name        = "dev-nat-eip"
+    Environment = "dev"
+  }
+}
+
+resource "aws_nat_gateway" "dev_nat" {
+  allocation_id = aws_eip.dev_nat.id
+  subnet_id     = aws_subnet.dev_public_1.id
+
+  tags = {
+    Name        = "dev-nat-gateway"
+    Environment = "dev"
+  }
+
+  depends_on = [aws_internet_gateway.dev_igw]
+}
+
+resource "aws_route_table" "dev_private_rt" {
+  vpc_id = aws_vpc.dev_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.dev_nat.id
+  }
+
+  tags = {
+    Name        = "dev-private-route-table"
+    Environment = "dev"
+  }
+}
+
+resource "aws_route_table_association" "private_1" {
+  subnet_id      = aws_subnet.dev_private_1.id
+  route_table_id = aws_route_table.dev_private_rt.id
+}
+
+resource "aws_route_table_association" "private_2" {
+  subnet_id      = aws_subnet.dev_private_2.id
+  route_table_id = aws_route_table.dev_private_rt.id
+}
+
 resource "aws_security_group" "dev_restricted_sg" {
   name        = "dev-restricted-access"
   description = "Permite trafico entrante solo desde la IP de desarrollo"
@@ -147,7 +230,7 @@ data "aws_ami" "ubuntu" {
   owners      = ["self"]
   filter {
     name   = "image-id"
-    values = ["ami-049830cefe34aa9ae"]
+    values = ["ami-00ac7a3ba7a51c8e0"]
   }
 }
 
@@ -222,14 +305,42 @@ resource "aws_iam_role_policy" "ec2_app_policy" {
 
 resource "aws_security_group" "ec2_sg" {
   name        = "mi-app-ec2-sg"
-  description = "Security Group para la instancia EC2 de Node.js"
+  description = "Permite trafico de Node.js unicamente desde el ALB"
   vpc_id      = aws_vpc.dev_vpc.id
 
+  ingress {
+    description     = "HTTP desde el ALB"
+    from_port       = 4000
+    to_port         = 4000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.dev_alb_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "dev_alb_sg" {
+  name        = "dev-alb-sg"
+  description = "Permite HTTPS al ALB solo desde las IP de desarrollo"
+  vpc_id      = aws_vpc.dev_vpc.id
 
   ingress {
-    description = "Acceso a la aplicacion Node.js"
-    from_port   = 4000
-    to_port     = 4000
+    description = "HTTP de desarrolladores para redireccion a HTTPS"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = [var.my_ip, var.dev_ip]
+  }
+
+  ingress {
+    description = "HTTPS de desarrolladores"
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = [var.my_ip, var.dev_ip]
   }
@@ -239,6 +350,81 @@ resource "aws_security_group" "ec2_sg" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "dev-alb-sg"
+    Environment = "dev"
+  }
+}
+
+resource "aws_lb" "dev_alb" {
+  name               = "dev-app-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.dev_alb_sg.id]
+  subnets            = [aws_subnet.dev_public_1.id, aws_subnet.dev_public_2.id]
+
+  tags = {
+    Name        = "dev-app-alb"
+    Environment = "dev"
+  }
+}
+
+resource "aws_lb_target_group" "dev_app" {
+  name        = "dev-app-targets"
+  port        = 4000
+  protocol    = "HTTP"
+  target_type = "instance"
+  vpc_id      = aws_vpc.dev_vpc.id
+
+  health_check {
+    enabled             = true
+    path                = var.alb_health_check_path
+    matcher             = "200-399"
+    protocol            = "HTTP"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+
+  tags = {
+    Name        = "dev-app-targets"
+    Environment = "dev"
+  }
+}
+
+resource "aws_lb_target_group_attachment" "dev_app" {
+  target_group_arn = aws_lb_target_group.dev_app.arn
+  target_id        = aws_instance.dev_ec2.id
+  port             = 4000
+}
+
+resource "aws_lb_listener" "dev_http" {
+  load_balancer_arn = aws_lb.dev_alb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+resource "aws_lb_listener" "dev_https" {
+  load_balancer_arn = aws_lb.dev_alb.arn
+  port              = 443
+  protocol          = "HTTPS"
+  certificate_arn   = var.alb_certificate_arn
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.dev_app.arn
   }
 }
 
@@ -293,11 +479,12 @@ resource "aws_vpc_endpoint" "secretsmanager" {
 }
 
 resource "aws_instance" "dev_ec2" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = "t3.micro" # Capa gratuita / Bajo costo para dev
-  subnet_id              = aws_subnet.dev_public_1.id
-  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = "t3.micro" # Capa gratuita / Bajo costo para dev
+  subnet_id                   = aws_subnet.dev_private_1.id
+  associate_public_ip_address = false
+  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
   root_block_device {
     volume_size = 20 # Suficiente para entornos de desarrollo comunes
     volume_type = "gp3"
@@ -642,9 +829,19 @@ resource "aws_lambda_permission" "eventbridge_expiry" {
 # OUTPUTS
 # ---------------------------------------------------------------------------------------------------------------------
 
-output "ec2_public_ip" {
-  value       = aws_instance.dev_ec2.public_ip
-  description = "IP publica de tu instancia EC2"
+output "ec2_private_ip" {
+  value       = aws_instance.dev_ec2.private_ip
+  description = "IP privada de la instancia EC2"
+}
+
+output "dev_api_domain" {
+  value       = var.alb_domain_name
+  description = "Dominio HTTPS de la API dev; debe apuntar al ALB en Namecheap"
+}
+
+output "dev_alb_dns_name" {
+  value       = aws_lb.dev_alb.dns_name
+  description = "DNS del ALB para crear el CNAME en Namecheap"
 }
 
 output "rds_endpoint" {
