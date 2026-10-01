@@ -305,7 +305,7 @@ resource "aws_iam_role_policy" "ec2_app_policy" {
 
 resource "aws_security_group" "ec2_sg" {
   name        = "mi-app-ec2-sg"
-  description = "Permite trafico de Node.js unicamente desde el ALB"
+  description = "Security Group para la instancia EC2 de Node.js"
   vpc_id      = aws_vpc.dev_vpc.id
 
   ingress {
