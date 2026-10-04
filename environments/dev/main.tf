@@ -326,7 +326,7 @@ resource "aws_security_group" "ec2_sg" {
 
 resource "aws_security_group" "dev_alb_sg" {
   name        = "dev-alb-sg"
-  description = "Permite trafico HTTP y HTTPS al ALB desde cualquier IP"
+  description = "Permite HTTPS al ALB solo desde las IP de desarrollo"
   vpc_id      = aws_vpc.dev_vpc.id
 
   ingress {
