@@ -45,13 +45,7 @@ const getDatabaseCredentials = async () => {
   }
 
   const credentials = JSON.parse(response.SecretString);
-  const requiredCredentials = [
-    "host",
-    "port",
-    "database",
-    "username",
-    "password"
-  ];
+  const requiredCredentials = ["username", "password"];
   const missingCredentials = requiredCredentials.filter(
     (name) => credentials[name] === undefined || credentials[name] === ""
   );
@@ -65,15 +59,29 @@ const getDatabaseCredentials = async () => {
   return credentials;
 };
 
-const getConnection = (credentials) =>
-  mysql.createConnection({
-    host: credentials.host,
-    port: Number(credentials.port),
-    database: credentials.database,
+const getConnection = (credentials) => {
+  const host = credentials.host || process.env.DB_HOST;
+  const port = credentials.port || process.env.DB_PORT;
+  const database = credentials.database || process.env.DB_NAME;
+  const missingConnectionInfo = Object.entries({ host, port, database })
+    .filter(([, value]) => value === undefined || value === "")
+    .map(([name]) => name);
+
+  if (missingConnectionInfo.length > 0) {
+    throw new Error(
+      `Database connection details are missing: ${missingConnectionInfo.join(", ")}`
+    );
+  }
+
+  return mysql.createConnection({
+    host,
+    port: Number(port),
+    database,
     user: credentials.username,
     password: credentials.password,
     timezone: "Z"
   });
+};
 
 export const handler = async () => {
   const missingVariables = requiredEnvironmentVariables.filter(
