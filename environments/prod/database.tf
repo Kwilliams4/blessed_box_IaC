@@ -32,6 +32,7 @@ resource "aws_db_parameter_group" "prod_mysql" {
 
 resource "aws_db_instance" "prod_mysql" {
   identifier                  = "blessedbox-prod-mysql"
+  snapshot_identifier         = "prod-rds"
   allocated_storage           = 50
   max_allocated_storage       = 200
   storage_type                = "gp3"

@@ -193,8 +193,9 @@ Before planning production, prepare:
   Agent configured to send application logs to `/blessedbox/prod/application`.
   Configure the application to use the production table, queue, bucket, and
   RDS secret outputs rather than development resources.
-- An ACM certificate in the selected region and a Route 53 hosted zone for the
-  API name.
+- An ACM certificate in the selected region for the API name. DNS validation
+  and the API record must be configured at the DNS provider (for example,
+  Namecheap).
 - A verified SES sender identity with production sending enabled, plus an email
   address for alarm notifications. Confirm the SNS email subscription after
   the first apply.
@@ -204,8 +205,8 @@ Before planning production, prepare:
 - Node.js dependencies for the scheduled expiry Lambda:
   `npm ci --prefix ../dev/expiry_lambda`.
 
-The certificate ARN, API name, hosted zone ID, AMI ID, SES sender, and alarm
-email are required Terraform inputs. Set them in an untracked
+The certificate ARN, API name, AMI ID, SES sender, and alarm email are required
+Terraform inputs. Set them in an untracked
 `environments/prod/terraform.tfvars` file (Terraform variable files are ignored
 by Git). Do not commit passwords or credentials; RDS generates and manages its
 master password in Secrets Manager.
@@ -213,11 +214,14 @@ master password in Secrets Manager.
 ```hcl
 app_ami_id         = "ami-REPLACE_WITH_PRODUCTION_AMI"
 api_domain_name    = "api.example.org"
-route53_zone_id    = "REPLACE_WITH_HOSTED_ZONE_ID"
 alb_certificate_arn = "arn:aws:acm:us-east-2:ACCOUNT_ID:certificate/CERTIFICATE_ID"
 ses_sender_email   = "noreply@example.org"
 alarm_email        = "oncall@example.org"
 ```
+
+After applying, create a CNAME record at the DNS provider for `api_domain_name`
+that points to Terraform's `alb_dns_name` output. Add ACM's DNS-validation
+CNAME as a separate record; it does not replace the API CNAME.
 
 ```bash
 cd environments/prod

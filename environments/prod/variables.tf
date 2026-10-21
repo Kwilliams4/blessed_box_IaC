@@ -16,12 +16,7 @@ variable "app_ami_id" {
 
 variable "api_domain_name" {
   type        = string
-  description = "Public API DNS name managed by the specified Route 53 hosted zone"
-}
-
-variable "route53_zone_id" {
-  type        = string
-  description = "Route 53 hosted zone ID for api_domain_name"
+  description = "Public API DNS name managed by the external DNS provider"
 }
 
 variable "alb_certificate_arn" {

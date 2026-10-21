@@ -175,15 +175,3 @@ resource "aws_wafv2_web_acl_association" "prod_api" {
   resource_arn = aws_lb.prod_alb.arn
   web_acl_arn  = aws_wafv2_web_acl.prod_api.arn
 }
-
-resource "aws_route53_record" "prod_api" {
-  zone_id = var.route53_zone_id
-  name    = var.api_domain_name
-  type    = "A"
-
-  alias {
-    name                   = aws_lb.prod_alb.dns_name
-    zone_id                = aws_lb.prod_alb.zone_id
-    evaluate_target_health = true
-  }
-}
