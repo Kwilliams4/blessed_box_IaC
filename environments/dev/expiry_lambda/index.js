@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 import { DateTime } from "luxon";
 import mysql from "mysql2/promise";
 
-const requiredEnvironmentVariables = ["DB_SECRET_ARN", "EXPIRY_TABLE"];
+const requiredEnvironmentVariables = ["EXPIRY_TABLE"];
 const ACCESS_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const ACCESS_CODE_LENGTH = 6;
 
@@ -36,6 +36,24 @@ const getNextUtcMidnight = (timezone) => {
 };
 
 const getDatabaseCredentials = async () => {
+  if (!process.env.DB_SECRET_ARN) {
+    const { DB_USERNAME: username, DB_PASSWORD: password } = process.env;
+    const missingCredentials = Object.entries({
+      DB_USERNAME: username,
+      DB_PASSWORD: password
+    })
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+
+    if (missingCredentials.length > 0) {
+      throw new Error(
+        `Missing database credentials: ${missingCredentials.join(", ")}`
+      );
+    }
+
+    return { username, password };
+  }
+
   const response = await secretsManager.send(
     new GetSecretValueCommand({ SecretId: process.env.DB_SECRET_ARN })
   );

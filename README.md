@@ -192,7 +192,9 @@ Before planning production, prepare:
   on port 4000, exposing `/health`, the SSM Agent installed, and the CloudWatch
   Agent configured to send application logs to `/blessedbox/prod/application`.
   Configure the application to use the production table, queue, bucket, and
-  RDS secret outputs rather than development resources.
+  RDS endpoint rather than development resources. The application must also
+  receive the same database username and password from its own protected
+  configuration; Terraform does not copy the local `.env` file to EC2.
 - An ACM certificate in the selected region for the API name. DNS validation
   and the API record must be configured at the DNS provider (for example,
   Namecheap).
@@ -208,8 +210,10 @@ Before planning production, prepare:
 The certificate ARN, API name, AMI ID, SES sender, and alarm email are required
 Terraform inputs. Set them in an untracked
 `environments/prod/terraform.tfvars` file (Terraform variable files are ignored
-by Git). Do not commit passwords or credentials; RDS generates and manages its
-master password in Secrets Manager.
+by Git). Set `TF_VAR_db_master_password` in the root `.env` file using the
+format in `.env.example`; `.env` is ignored by Git. Terraform does not load
+`.env` files automatically, so load the value into the current PowerShell
+session before running Terraform:
 
 ```hcl
 app_ami_id         = "ami-REPLACE_WITH_PRODUCTION_AMI"
@@ -218,6 +222,18 @@ alb_certificate_arn = "arn:aws:acm:us-east-2:ACCOUNT_ID:certificate/CERTIFICATE_
 ses_sender_email   = "noreply@example.org"
 alarm_email        = "oncall@example.org"
 ```
+
+```powershell
+$DbPasswordLine = Get-Content .env | Where-Object { $_ -match '^TF_VAR_db_master_password=' } | Select-Object -First 1
+if (-not $DbPasswordLine) { throw "TF_VAR_db_master_password is missing from .env." }
+$env:TF_VAR_db_master_password = $DbPasswordLine.Substring("TF_VAR_db_master_password=".Length)
+Set-Location .\environments\prod
+```
+
+For now, the password is stored in Terraform state and in the scheduled Lambda's
+environment configuration. Protect the local state and AWS access accordingly;
+Secrets Manager can replace this pilot setup later. The local `.env` value must
+also be supplied separately when building/configuring the application AMI.
 
 After applying, create a CNAME record at the DNS provider for `api_domain_name`
 that points to Terraform's `alb_dns_name` output. Add ACM's DNS-validation
@@ -250,9 +266,8 @@ Requirements:
 - Session Manager plugin installed locally.
 - An operator identity authorized to describe EC2/RDS instances, start and end
   SSM sessions to the tagged production instances using the
-  `AWS-StartPortForwardingSessionToRemoteHost` document, and read the RDS
-  master secret in Secrets Manager. Grant these permissions only to designated
-  operators; they are not granted to a developer's machine by this Terraform.
+  `AWS-StartPortForwardingSessionToRemoteHost` document. These permissions are
+  not granted to a developer's machine by this Terraform.
 - The selected EC2 instance must be online in Systems Manager. Its AMI needs
   the SSM Agent, and the instance profile in this configuration already
   includes `AmazonSSMManagedInstanceCore`.
@@ -289,27 +304,11 @@ aws ssm start-session `
 ```
 
 While the session is active, connect your MySQL client (for example,
-MySQL Workbench) to `127.0.0.1:3306`. Retrieve the RDS-managed credentials
-only when needed:
-
-```powershell
-Set-Location .\environments\prod
-$SecretArn = terraform output -raw db_credentials_secret_arn
-$SecretJson = aws secretsmanager get-secret-value `
-  --region $Region `
-  --secret-id $SecretArn `
-  --query SecretString `
-  --output text
-$DbCredentials = $SecretJson | ConvertFrom-Json
-$DbCredentials.username
-```
-
-Use the displayed username and the password in `$DbCredentials` in your client;
-in the MySQL command-line client, use `mysql --host 127.0.0.1 --port 3306
---user $($DbCredentials.username) --password` and enter the password at its
-prompt. Treat the master credentials as privileged, do not paste them into
-logs or commit them, and close the tunnel with `Ctrl+C` when finished. The
-forwarded local port is available only while the SSM session is running.
+MySQL Workbench) to `127.0.0.1:3306`. Use the username `bb_prod_admin` and the
+password stored as `TF_VAR_db_master_password` in the local `.env` file. Treat
+the master credentials as privileged, do not paste them into logs or commit
+them, and close the tunnel with `Ctrl+C` when finished. The forwarded local
+port is available only while the SSM session is running.
 
 ## Security
 

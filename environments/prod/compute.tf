@@ -68,11 +68,6 @@ resource "aws_iam_role_policy" "prod_ec2_app" {
         Resource = aws_sqs_queue.prod_processing.arn
       },
       {
-        Effect   = "Allow"
-        Action   = ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"]
-        Resource = aws_db_instance.prod_mysql.master_user_secret[0].secret_arn
-      },
-      {
         Effect = "Allow"
         Action = [
           "logs:CreateLogStream",

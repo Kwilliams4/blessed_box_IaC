@@ -94,7 +94,7 @@ resource "aws_security_group" "prod_db" {
 
 resource "aws_security_group" "prod_expiry_lambda" {
   name        = "prod-expiry-lambda"
-  description = "Expiry Lambda egress to RDS and Secrets Manager"
+  description = "Expiry Lambda egress to RDS"
   vpc_id      = aws_vpc.prod_vpc.id
 
   egress {
@@ -106,46 +106,6 @@ resource "aws_security_group" "prod_expiry_lambda" {
 
   tags = {
     Name        = "prod-expiry-lambda"
-    Environment = "prod"
-  }
-}
-
-resource "aws_security_group" "prod_secretsmanager_endpoint" {
-  name        = "prod-secretsmanager-endpoint"
-  description = "HTTPS access to the Secrets Manager VPC endpoint from expiry Lambda"
-  vpc_id      = aws_vpc.prod_vpc.id
-
-  ingress {
-    description     = "HTTPS from expiry Lambda"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.prod_expiry_lambda.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name        = "prod-secretsmanager-endpoint"
-    Environment = "prod"
-  }
-}
-
-resource "aws_vpc_endpoint" "prod_secretsmanager" {
-  vpc_id              = aws_vpc.prod_vpc.id
-  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
-  vpc_endpoint_type   = "Interface"
-  private_dns_enabled = true
-  subnet_ids          = [aws_subnet.prod_private_a.id, aws_subnet.prod_private_b.id]
-  security_group_ids  = [aws_security_group.prod_secretsmanager_endpoint.id]
-
-  tags = {
-    Name        = "prod-secretsmanager"
     Environment = "prod"
   }
 }

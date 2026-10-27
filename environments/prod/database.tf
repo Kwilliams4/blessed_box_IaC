@@ -31,25 +31,25 @@ resource "aws_db_parameter_group" "prod_mysql" {
 }
 
 resource "aws_db_instance" "prod_mysql" {
-  identifier                  = "blessedbox-prod-mysql"
-  snapshot_identifier         = "prod-rds"
-  allocated_storage           = 50
-  max_allocated_storage       = 200
-  storage_type                = "gp3"
-  storage_encrypted           = true
-  engine                      = "mysql"
-  engine_version              = "8.0"
-  instance_class              = var.db_instance_class
-  db_name                     = "blessedbox_prod"
-  username                    = "bb_prod_admin"
-  manage_master_user_password = true
-  multi_az                    = true
-  db_subnet_group_name        = aws_db_subnet_group.prod_mysql.name
-  parameter_group_name        = aws_db_parameter_group.prod_mysql.name
-  vpc_security_group_ids      = [aws_security_group.prod_db.id]
-  publicly_accessible         = false
-  backup_retention_period     = 7
-  copy_tags_to_snapshot       = true
+  identifier              = "blessedbox-prod-mysql"
+  snapshot_identifier     = "prod-rds"
+  allocated_storage       = 50
+  max_allocated_storage   = 200
+  storage_type            = "gp3"
+  storage_encrypted       = true
+  engine                  = "mysql"
+  engine_version          = "8.0"
+  instance_class          = var.db_instance_class
+  db_name                 = "blessedbox_prod"
+  username                = "bb_prod_admin"
+  password                = var.db_master_password
+  multi_az                = true
+  db_subnet_group_name    = aws_db_subnet_group.prod_mysql.name
+  parameter_group_name    = aws_db_parameter_group.prod_mysql.name
+  vpc_security_group_ids  = [aws_security_group.prod_db.id]
+  publicly_accessible     = false
+  backup_retention_period = 7
+  copy_tags_to_snapshot   = true
   enabled_cloudwatch_logs_exports = [
     "error",
     "slowquery"

@@ -18,12 +18,6 @@ output "rds_endpoint" {
   value       = aws_db_instance.prod_mysql.endpoint
 }
 
-output "db_credentials_secret_arn" {
-  description = "Secrets Manager ARN for RDS-managed master credentials"
-  value       = aws_db_instance.prod_mysql.master_user_secret[0].secret_arn
-  sensitive   = true
-}
-
 output "sqs_queue_url" {
   description = "Production notification processing queue URL"
   value       = aws_sqs_queue.prod_processing.id

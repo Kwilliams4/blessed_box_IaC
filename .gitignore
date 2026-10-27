@@ -11,6 +11,11 @@ node_modules/
 # Ignorar el archivo comprimido de la función Lambda
 *.zip
 
+# Local environment variables (keep the example template tracked)
+.env
+.env.*
+!.env.example
+
 # Crash log files
 crash.log
 crash.*.log

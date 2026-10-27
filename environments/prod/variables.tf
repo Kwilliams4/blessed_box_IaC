@@ -63,6 +63,17 @@ variable "db_instance_class" {
   default     = "db.t3.medium"
 }
 
+variable "db_master_password" {
+  type        = string
+  description = "Master password for the production RDS instance, supplied via TF_VAR_db_master_password"
+  sensitive   = true
+
+  validation {
+    condition     = length(var.db_master_password) >= 8 && length(var.db_master_password) <= 41
+    error_message = "db_master_password must be between 8 and 41 characters."
+  }
+}
+
 variable "asg_min_size" {
   type        = number
   description = "Minimum number of API instances"
