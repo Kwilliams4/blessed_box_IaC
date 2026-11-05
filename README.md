@@ -188,13 +188,21 @@ state.
 
 Before planning production, prepare:
 
-- An application AMI in the selected region with the API installed, listening
-  on port 4000, exposing `/health`, the SSM Agent installed, and the CloudWatch
-  Agent configured to send application logs to `/blessedbox/prod/application`.
-  Configure the application to use the production table, queue, bucket, and
-  RDS endpoint rather than development resources. The application must also
-  receive the same database username and password from its own protected
-  configuration; Terraform does not copy the local `.env` file to EC2.
+- An Ubuntu application AMI in the selected region with the API installed at
+  `/home/ubuntu/blessed-box/Blessed-Box-BackEnd`, its `app.js` entry point,
+  Git, Node.js, Python 3, and the SSM Agent. The `ubuntu` user must be able to
+  fetch the private backend repository, as the deployment workflow already
+  does. If AWS CLI is missing, EC2 user data installs it from the Ubuntu
+  package repository. The API must expose `/health`; Terraform installs and
+  enables `blessedbox-api.service`, runs it on port 4000, and refreshes its
+  runtime configuration every 15 minutes.
+  If the AMI already starts this same `app.js` entry through PM2, bootstrap
+  removes that matching PM2 process before handing startup to systemd.
+  The backend must read `DYNAMODB_SESSIONS_TABLE` and `DYNAMODB_OTP_TABLE`
+  when selecting its DynamoDB tables; production sets these to its `prod-*`
+  tables rather than granting the EC2 role access to development tables.
+  Configure the CloudWatch Agent to collect
+  `/var/log/blessedbox/application.log` into `/blessedbox/prod/application`.
 - An ACM certificate in the selected region for the API name. DNS validation
   and the API record must be configured at the DNS provider (for example,
   Namecheap).
@@ -207,33 +215,82 @@ Before planning production, prepare:
 - Node.js dependencies for the scheduled expiry Lambda:
   `npm ci --prefix ../dev/expiry_lambda`.
 
-The certificate ARN, API name, AMI ID, SES sender, and alarm email are required
-Terraform inputs. Set them in an untracked
+The certificate ARN, API name, AMI ID, initial backend release SHA, SES sender,
+and alarm email are required Terraform inputs. Set them in an untracked
 `environments/prod/terraform.tfvars` file (Terraform variable files are ignored
-by Git). Set `TF_VAR_db_master_password` in the root `.env` file using the
-format in `.env.example`; `.env` is ignored by Git. Terraform does not load
-`.env` files automatically, so load the value into the current PowerShell
-session before running Terraform:
+by Git). Do not put database passwords or JWT secrets in that file. RDS
+generates and manages its master password in Secrets Manager; the EC2 role and
+expiry Lambda can read only that RDS secret. The app's JWT signing keys are
+SSM `SecureString` parameters. From the repository root, create them if they do
+not already exist:
 
 ```hcl
-app_ami_id         = "ami-REPLACE_WITH_PRODUCTION_AMI"
-api_domain_name    = "api.example.org"
+aws_region          = "us-east-2"
+app_ami_id          = "ami-REPLACE_WITH_PRODUCTION_AMI"
+initial_release_sha = "40_CHARACTER_BACKEND_COMMIT_SHA"
+api_domain_name     = "api.example.org"
 alb_certificate_arn = "arn:aws:acm:us-east-2:ACCOUNT_ID:certificate/CERTIFICATE_ID"
-ses_sender_email   = "noreply@example.org"
-alarm_email        = "oncall@example.org"
+ses_sender_email    = "noreply@example.org"
+alarm_email         = "oncall@example.org"
 ```
 
 ```powershell
-$DbPasswordLine = Get-Content .env | Where-Object { $_ -match '^TF_VAR_db_master_password=' } | Select-Object -First 1
-if (-not $DbPasswordLine) { throw "TF_VAR_db_master_password is missing from .env." }
-$env:TF_VAR_db_master_password = $DbPasswordLine.Substring("TF_VAR_db_master_password=".Length)
-Set-Location .\environments\prod
+.\environments\prod\prepare-secrets.ps1 -Region us-east-2
 ```
 
-For now, the password is stored in Terraform state and in the scheduled Lambda's
-environment configuration. Protect the local state and AWS access accordingly;
-Secrets Manager can replace this pilot setup later. The local `.env` value must
-also be supplied separately when building/configuring the application AMI.
+The helper generates random JWT values only for missing parameters and never
+overwrites existing ones. If you override the JWT parameter-name Terraform
+variables, pass the same names to this helper. The EC2 bootstrap retrieves the
+initial release SHA from `/blessedbox/prod/app/RELEASE_SHA`, checks out that
+exact commit, installs its dependencies, then retrieves the RDS secret and JWT
+parameters, writes `/etc/blessedbox/.env` with mode `0600`, and starts the API
+only after configuration is available. Terraform seeds the release parameter
+from `initial_release_sha` on first creation and ignores subsequent value drift
+so Terraform does not overwrite releases published by GitHub Actions.
+
+For each production release, the backend workflow should publish the triggering
+commit SHA and use an Auto Scaling instance refresh as the deployment. Do not
+deploy with a separate per-instance `git pull`/restart step: replacement
+instances fetch the SHA from Parameter Store during bootstrap, and the refresh
+rolls the whole group with the configured healthy-capacity and warmup settings.
+For example, after configuring AWS credentials:
+
+```bash
+aws ssm put-parameter \
+  --name /blessedbox/prod/app/RELEASE_SHA \
+  --type String \
+  --value "$GITHUB_SHA" \
+  --overwrite
+
+REFRESH_ID=$(aws autoscaling start-instance-refresh \
+  --auto-scaling-group-name prod-api \
+  --query InstanceRefreshId \
+  --output text)
+
+while true; do
+  STATUS=$(aws autoscaling describe-instance-refreshes \
+    --auto-scaling-group-name prod-api \
+    --instance-refresh-ids "$REFRESH_ID" \
+    --query "InstanceRefreshes[0].Status" \
+    --output text)
+  case "$STATUS" in
+    Successful) break ;;
+    Pending|InProgress|Baking|Cancelling|RollbackInProgress) sleep 15 ;;
+    *)
+      echo "Production instance refresh ended with status: $STATUS" >&2
+      exit 1
+      ;;
+  esac
+done
+```
+
+The workflow must use the `github_actions_prod_role_arn` output from the
+`github-actions` Terraform configuration. That dedicated role trusts only the
+backend repository's `main` branch, can publish the release parameter, and can
+start and monitor the instance refresh. Do not use the development role for
+production deployments. If an AWS-managed RDS password rotation changes the
+secret, the instance timer refreshes the environment file and restarts the
+service. Protect the local Terraform state and AWS access as usual.
 
 After applying, create a CNAME record at the DNS provider for `api_domain_name`
 that points to Terraform's `alb_dns_name` output. Add ACM's DNS-validation
@@ -245,13 +302,28 @@ npm ci --prefix ../dev/expiry_lambda
 terraform init
 terraform validate
 terraform plan
+terraform apply
 ```
 
 The default production CIDR is `10.1.0.0/16` so it does not overlap the
 development VPC. Production uses two NAT gateways and a Multi-AZ database, so
-review the AWS cost estimate in the plan before applying. RDS, DynamoDB, and
-the production buckets have deletion protection; this configuration also uses
-a local Terraform state unless a remote backend is configured separately.
+review the AWS cost estimate in the plan before applying. RDS and DynamoDB
+deletion protection and Terraform destroy guards are enabled. S3 buckets have
+versioning enabled and cannot be force-destroyed. RDS creates a final snapshot
+on deletion. This configuration also uses a local Terraform state unless a
+remote backend is configured separately.
+
+After applying, verify the HTTPS API and database health:
+
+```powershell
+$ApiUrl = terraform -chdir=environments/prod output -raw api_url
+Invoke-RestMethod "$ApiUrl/health"
+```
+
+The health endpoint must return HTTP 200. Also confirm both EC2 targets are
+healthy behind the ALB, then exercise the application's normal upload and
+notification workflows to verify its scoped S3 and SQS access. Do not send an
+ad-hoc message to the production queue; it triggers the notification Lambda.
 
 #### Emergency MySQL access from a local machine
 

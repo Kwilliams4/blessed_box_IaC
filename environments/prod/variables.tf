@@ -14,6 +14,27 @@ variable "app_ami_id" {
   }
 }
 
+variable "initial_release_sha" {
+  type        = string
+  description = "Initial backend commit SHA to deploy and use for new production instances"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.initial_release_sha))
+    error_message = "initial_release_sha must be a full 40-character lowercase Git commit SHA."
+  }
+}
+
+variable "release_sha_parameter_name" {
+  type        = string
+  description = "SSM parameter containing the backend commit SHA used by production instances"
+  default     = "/blessedbox/prod/app/RELEASE_SHA"
+
+  validation {
+    condition     = startswith(var.release_sha_parameter_name, "/")
+    error_message = "release_sha_parameter_name must be an absolute SSM parameter path."
+  }
+}
+
 variable "api_domain_name" {
   type        = string
   description = "Public API DNS name managed by the external DNS provider"
@@ -63,14 +84,25 @@ variable "db_instance_class" {
   default     = "db.t3.medium"
 }
 
-variable "db_master_password" {
+variable "jwt_secret_parameter_name" {
   type        = string
-  description = "Master password for the production RDS instance, supplied via TF_VAR_db_master_password"
-  sensitive   = true
+  description = "SSM SecureString parameter containing the production JWT signing secret"
+  default     = "/blessedbox/prod/app/JWT_SECRET"
 
   validation {
-    condition     = length(var.db_master_password) >= 8 && length(var.db_master_password) <= 41
-    error_message = "db_master_password must be between 8 and 41 characters."
+    condition     = startswith(var.jwt_secret_parameter_name, "/")
+    error_message = "jwt_secret_parameter_name must be an absolute SSM parameter path."
+  }
+}
+
+variable "jwt_refresh_secret_parameter_name" {
+  type        = string
+  description = "SSM SecureString parameter containing the production JWT refresh secret"
+  default     = "/blessedbox/prod/app/JWT_REFRESH_SECRET"
+
+  validation {
+    condition     = startswith(var.jwt_refresh_secret_parameter_name, "/")
+    error_message = "jwt_refresh_secret_parameter_name must be an absolute SSM parameter path."
   }
 }
 

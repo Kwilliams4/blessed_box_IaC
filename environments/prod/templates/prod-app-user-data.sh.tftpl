@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+exec > >(tee -a /var/log/blessedbox-bootstrap.log | logger -t blessedbox-bootstrap) 2>&1
+
+APP_DIR='${app_dir}'
+AWS_BIN="$(command -v aws || sudo -u ubuntu -H bash -lc 'command -v aws' || true)"
+NODE_BIN="$(command -v node || sudo -u ubuntu -H bash -lc 'command -v node' || true)"
+
+if [ -z "$AWS_BIN" ]; then
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "AWS CLI is missing and this AMI cannot install it with apt."
+    exit 1
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y awscli
+  AWS_BIN="$(command -v aws || true)"
+fi
+
+if [ -z "$AWS_BIN" ]; then
+  echo "AWS CLI installation did not provide the aws executable."
+  exit 1
+fi
+
+if [ -z "$NODE_BIN" ] || ! command -v python3 >/dev/null 2>&1; then
+  echo "Node.js and Python 3 are required in the application AMI."
+  exit 1
+fi
+
+if ! id ubuntu >/dev/null 2>&1 || [ ! -f "$APP_DIR/app.js" ]; then
+  echo "Expected ubuntu user and application entry point at $APP_DIR/app.js."
+  exit 1
+fi
+
+if sudo -u ubuntu -H bash -lc 'command -v pm2 >/dev/null 2>&1'; then
+  pm2_ids="$(
+    sudo -u ubuntu -H bash -lc 'pm2 jlist' |
+      python3 -c 'import json,sys; print("\n".join(str(process["pm_id"]) for process in json.load(sys.stdin) if process.get("pm2_env", {}).get("pm_exec_path") == sys.argv[1]))' "$APP_DIR/app.js"
+  )"
+  if [ -n "$pm2_ids" ]; then
+    while IFS= read -r pm2_id; do
+      [ -n "$pm2_id" ] || continue
+      sudo -u ubuntu -H bash -lc 'pm2 delete "$1"' _ "$pm2_id"
+    done <<< "$pm2_ids"
+    sudo -u ubuntu -H bash -lc 'pm2 save --force'
+  fi
+fi
+
+RELEASE_SHA="$("$AWS_BIN" ssm get-parameter \
+  --region '${aws_region}' \
+  --name '${release_sha_parameter_name}' \
+  --query Parameter.Value \
+  --output text)"
+if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "The production release parameter must contain a full Git commit SHA."
+  exit 1
+fi
+
+sudo -iu ubuntu bash -lc '
+set -Eeuo pipefail
+app_dir="$1"
+release_sha="$2"
+git -C "$app_dir" fetch --no-tags origin main
+git -C "$app_dir" cat-file -e "$release_sha^{commit}"
+git -C "$app_dir" checkout --force "$release_sha"
+test "$(git -C "$app_dir" rev-parse HEAD)" = "$release_sha"
+cd "$app_dir"
+npm ci
+' _ "$APP_DIR" "$RELEASE_SHA"
+
+install -d -o root -g root -m 0700 /etc/blessedbox
+install -d -o root -g root -m 0755 /usr/local/sbin
+install -d -o root -g root -m 0755 /var/log/blessedbox
+
+cat > /usr/local/sbin/blessedbox-refresh-env <<'SCRIPT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+AWS_BIN_PLACEHOLDER
+NODE_BIN_PLACEHOLDER
+AWS_REGION='${aws_region}'
+DB_SECRET_ARN='${db_secret_arn}'
+DB_HOST='${db_host}'
+DB_NAME='${db_name}'
+DYNAMODB_SESSIONS_TABLE='${dynamodb_sessions_table}'
+DYNAMODB_OTP_TABLE='${dynamodb_otp_table}'
+JWT_SECRET_PARAMETER='${ssm_jwt_secret_name}'
+JWT_REFRESH_SECRET_PARAMETER='${ssm_jwt_refresh_secret_name}'
+SQS_QUEUE_URL='${sqs_queue_url}'
+S3_BUCKET='${s3_bucket}'
+ENV_FILE=/etc/blessedbox/.env
+
+SECRET_JSON="$("$AWS_BIN" secretsmanager get-secret-value \
+  --region "$AWS_REGION" \
+  --secret-id "$DB_SECRET_ARN" \
+  --query SecretString \
+  --output text)"
+DB_USER="$(printf '%s' "$SECRET_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["username"])')"
+DB_PASS="$(printf '%s' "$SECRET_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["password"])')"
+JWT_SECRET="$("$AWS_BIN" ssm get-parameter \
+  --region "$AWS_REGION" \
+  --name "$JWT_SECRET_PARAMETER" \
+  --with-decryption \
+  --query Parameter.Value \
+  --output text)"
+JWT_REFRESH_SECRET="$("$AWS_BIN" ssm get-parameter \
+  --region "$AWS_REGION" \
+  --name "$JWT_REFRESH_SECRET_PARAMETER" \
+  --with-decryption \
+  --query Parameter.Value \
+  --output text)"
+
+export NODE_ENV=production
+export PORT=4000
+export DB_HOST DB_USER DB_PASS DB_NAME
+export DYNAMODB_SESSIONS_TABLE DYNAMODB_OTP_TABLE
+export JWT_SECRET JWT_REFRESH_SECRET
+export SQS_QUEUE_URL AWS_REGION S3_BUCKET
+
+tmp_env="$(mktemp /etc/blessedbox/.env.XXXXXX)"
+trap 'rm -f "$tmp_env"' EXIT
+
+"$NODE_BIN" - "$tmp_env" <<'NODE'
+const fs = require("node:fs");
+const names = [
+  "NODE_ENV",
+  "PORT",
+  "DB_HOST",
+  "DB_USER",
+  "DB_PASS",
+  "DB_NAME",
+  "DYNAMODB_SESSIONS_TABLE",
+  "DYNAMODB_OTP_TABLE",
+  "JWT_SECRET",
+  "JWT_REFRESH_SECRET",
+  "SQS_QUEUE_URL",
+  "AWS_REGION",
+  "S3_BUCKET"
+];
+const missing = names.filter((name) => !process.env[name]);
+if (missing.length) {
+  throw new Error("Missing required application settings: " + missing.join(", "));
+}
+const contents = names
+  .map((name) => name + "=" + JSON.stringify(process.env[name]))
+  .join("\n") + "\n";
+fs.writeFileSync(process.argv[2], contents, { mode: 0o600 });
+fs.chmodSync(process.argv[2], 0o600);
+NODE
+
+if [ -f "$ENV_FILE" ] && cmp -s "$tmp_env" "$ENV_FILE"; then
+  exit 0
+fi
+
+mv -f "$tmp_env" "$ENV_FILE"
+trap - EXIT
+systemctl restart blessedbox-api.service
+SCRIPT
+
+chmod 0755 /usr/local/sbin/blessedbox-refresh-env
+sed -i "s|^AWS_BIN_PLACEHOLDER$|AWS_BIN='$AWS_BIN'|" /usr/local/sbin/blessedbox-refresh-env
+sed -i "s|^NODE_BIN_PLACEHOLDER$|NODE_BIN='$NODE_BIN'|" /usr/local/sbin/blessedbox-refresh-env
+
+cat > /etc/systemd/system/blessedbox-api.service <<UNIT
+[Unit]
+Description=BlessedBox API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=$APP_DIR
+EnvironmentFile=/etc/blessedbox/.env
+ExecStart=$NODE_BIN app.js
+Restart=on-failure
+RestartSec=5
+UMask=0077
+StandardOutput=append:/var/log/blessedbox/application.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat > /etc/systemd/system/blessedbox-refresh-env.service <<'UNIT'
+[Unit]
+Description=Refresh BlessedBox runtime configuration from AWS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/blessedbox-refresh-env
+UNIT
+
+cat > /etc/systemd/system/blessedbox-refresh-env.timer <<'UNIT'
+[Unit]
+Description=Refresh BlessedBox runtime configuration periodically
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=15min
+RandomizedDelaySec=1min
+Unit=blessedbox-refresh-env.service
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+
+systemctl enable blessedbox-api.service
+systemctl enable --now blessedbox-refresh-env.timer
+systemctl start blessedbox-refresh-env.service

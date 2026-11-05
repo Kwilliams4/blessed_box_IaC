@@ -112,6 +112,20 @@ resource "aws_iam_role_policy_attachment" "prod_expiry_lambda_vpc" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
+resource "aws_iam_role_policy" "prod_expiry_lambda_secret" {
+  name = "prod-expiry-lambda-database-secret"
+  role = aws_iam_role.prod_expiry_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = aws_db_instance.prod_mysql.master_user_secret[0].secret_arn
+    }]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "prod_expiry_lambda" {
   name              = "/aws/lambda/prod-update-expiration"
   retention_in_days = 365
@@ -137,18 +151,18 @@ resource "aws_lambda_function" "prod_expiry" {
 
   environment {
     variables = {
-      DB_USERNAME  = aws_db_instance.prod_mysql.username
-      DB_PASSWORD  = var.db_master_password
-      DB_HOST      = aws_db_instance.prod_mysql.address
-      DB_PORT      = tostring(aws_db_instance.prod_mysql.port)
-      DB_NAME      = aws_db_instance.prod_mysql.db_name
-      EXPIRY_TABLE = var.expiry_table_name
+      DB_SECRET_ARN = aws_db_instance.prod_mysql.master_user_secret[0].secret_arn
+      DB_HOST       = aws_db_instance.prod_mysql.address
+      DB_PORT       = tostring(aws_db_instance.prod_mysql.port)
+      DB_NAME       = aws_db_instance.prod_mysql.db_name
+      EXPIRY_TABLE  = var.expiry_table_name
     }
   }
 
   depends_on = [
     aws_iam_role_policy_attachment.prod_expiry_lambda_logs,
     aws_iam_role_policy_attachment.prod_expiry_lambda_vpc,
+    aws_iam_role_policy.prod_expiry_lambda_secret,
     aws_cloudwatch_log_group.prod_expiry_lambda
   ]
 
