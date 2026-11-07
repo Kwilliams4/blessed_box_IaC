@@ -189,15 +189,16 @@ state.
 Before planning production, prepare:
 
 - An Ubuntu application AMI in the selected region with the API installed at
-  `/home/ubuntu/blessed-box/Blessed-Box-BackEnd`, its `app.js` entry point,
-  Git, Node.js, Python 3, and the SSM Agent. The `ubuntu` user must be able to
-  fetch the private backend repository, as the deployment workflow already
-  does. If AWS CLI is missing, EC2 user data installs it from the Ubuntu
-  package repository. The API must expose `/health`; Terraform installs and
-  enables `blessedbox-api.service`, runs it on port 4000, and refreshes its
-  runtime configuration every 15 minutes.
-  If the AMI already starts this same `app.js` entry through PM2, bootstrap
-  removes that matching PM2 process before handing startup to systemd.
+  `/home/ubuntu/blessed-box/Blessed-Box-BackEnd`, plus Git, Node.js, Python 3,
+  and the SSM Agent. The production bootstrap clones the public backend
+  repository at the release SHA stored in SSM, installs its dependencies,
+  and replaces the pre-baked application directory. If AWS CLI is missing,
+  EC2 user data installs it from the Ubuntu package repository. The API must
+  expose `/health`; Terraform installs and enables `blessedbox-api.service`,
+  runs it on port 4000, and refreshes its runtime configuration every
+  15 minutes. If the AMI already starts this same `app.js` entry through PM2,
+  bootstrap removes that matching PM2 process before handing startup to
+  systemd.
   The backend must read `DYNAMODB_SESSIONS_TABLE` and `DYNAMODB_OTP_TABLE`
   when selecting its DynamoDB tables; production sets these to its `prod-*`
   tables rather than granting the EC2 role access to development tables.
@@ -243,8 +244,9 @@ overwrites existing ones. If you override the JWT parameter-name Terraform
 variables, pass the same names to this helper. The EC2 bootstrap retrieves the
 initial release SHA from `/blessedbox/prod/app/RELEASE_SHA`, checks out that
 exact commit, installs its dependencies, then retrieves the RDS secret and JWT
-parameters, writes `/etc/blessedbox/.env` with mode `0600`, and starts the API
-only after configuration is available. Terraform seeds the release parameter
+parameters, writes `.env` in the application root with mode `0600`, and starts
+the API only after configuration is available. Ensure `.env` is ignored by the
+backend repository and never committed. Terraform seeds the release parameter
 from `initial_release_sha` on first creation and ignores subsequent value drift
 so Terraform does not overwrite releases published by GitHub Actions.
 

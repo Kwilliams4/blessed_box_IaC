@@ -28,8 +28,8 @@ if [ -z "$NODE_BIN" ] || ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! id ubuntu >/dev/null 2>&1 || [ ! -f "$APP_DIR/app.js" ]; then
-  echo "Expected ubuntu user and application entry point at $APP_DIR/app.js."
+if ! id ubuntu >/dev/null 2>&1; then
+  echo "Expected ubuntu user for the application."
   exit 1
 fi
 
@@ -57,17 +57,46 @@ if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-sudo -iu ubuntu bash -lc '
+APP_REPO_URL=https://github.com/BlessedBox-DevTeam/Blessed-Box-BackEnd.git
+RELEASE_DIR="$${APP_DIR}.release.$$"
+if [ -e "$RELEASE_DIR" ]; then
+  echo "Temporary release directory already exists: $RELEASE_DIR"
+  exit 1
+fi
+
+sudo -u ubuntu env \
+  APP_REPO_URL="$APP_REPO_URL" \
+  RELEASE_DIR="$RELEASE_DIR" \
+  RELEASE_SHA="$RELEASE_SHA" \
+  bash -c '
 set -Eeuo pipefail
-app_dir="$1"
-release_sha="$2"
-git -C "$app_dir" fetch --no-tags origin main
-git -C "$app_dir" cat-file -e "$release_sha^{commit}"
-git -C "$app_dir" checkout --force "$release_sha"
-test "$(git -C "$app_dir" rev-parse HEAD)" = "$release_sha"
-cd "$app_dir"
+git clone --no-checkout "$APP_REPO_URL" "$RELEASE_DIR"
+git -C "$RELEASE_DIR" fetch --no-tags origin main
+git -C "$RELEASE_DIR" cat-file -e "$RELEASE_SHA^{commit}"
+git -C "$RELEASE_DIR" checkout --detach "$RELEASE_SHA"
+test "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = "$RELEASE_SHA"
+cd "$RELEASE_DIR"
 npm ci
-' _ "$APP_DIR" "$RELEASE_SHA"
+'
+
+if [ -e "$APP_DIR" ] || [ -L "$APP_DIR" ]; then
+  APP_BACKUP_DIR="$${APP_DIR}.bootstrap-backup-$(date +%s)"
+  mv "$APP_DIR" "$APP_BACKUP_DIR"
+  rm -f "$APP_BACKUP_DIR/.env"
+fi
+
+if ! mv "$RELEASE_DIR" "$APP_DIR"; then
+  if [ -n "$${APP_BACKUP_DIR:-}" ] && [ -d "$APP_BACKUP_DIR" ]; then
+    mv "$APP_BACKUP_DIR" "$APP_DIR"
+  fi
+  echo "Failed to install release at $APP_DIR."
+  exit 1
+fi
+
+if [ ! -f "$APP_DIR/app.js" ]; then
+  echo "Release does not contain the expected application entry point at $APP_DIR/app.js."
+  exit 1
+fi
 
 install -d -o root -g root -m 0700 /etc/blessedbox
 install -d -o root -g root -m 0755 /usr/local/sbin
@@ -79,6 +108,7 @@ set -Eeuo pipefail
 
 AWS_BIN_PLACEHOLDER
 NODE_BIN_PLACEHOLDER
+APP_DIR='${app_dir}'
 AWS_REGION='${aws_region}'
 DB_SECRET_ARN='${db_secret_arn}'
 DB_HOST='${db_host}'
@@ -89,7 +119,7 @@ JWT_SECRET_PARAMETER='${ssm_jwt_secret_name}'
 JWT_REFRESH_SECRET_PARAMETER='${ssm_jwt_refresh_secret_name}'
 SQS_QUEUE_URL='${sqs_queue_url}'
 S3_BUCKET='${s3_bucket}'
-ENV_FILE=/etc/blessedbox/.env
+ENV_FILE="$APP_DIR/.env"
 
 SECRET_JSON="$("$AWS_BIN" secretsmanager get-secret-value \
   --region "$AWS_REGION" \
@@ -118,7 +148,7 @@ export DYNAMODB_SESSIONS_TABLE DYNAMODB_OTP_TABLE
 export JWT_SECRET JWT_REFRESH_SECRET
 export SQS_QUEUE_URL AWS_REGION S3_BUCKET
 
-tmp_env="$(mktemp /etc/blessedbox/.env.XXXXXX)"
+tmp_env="$(mktemp "$APP_DIR/.env.XXXXXX")"
 trap 'rm -f "$tmp_env"' EXIT
 
 "$NODE_BIN" - "$tmp_env" <<'NODE'
@@ -173,7 +203,7 @@ Type=simple
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=$APP_DIR
-EnvironmentFile=/etc/blessedbox/.env
+EnvironmentFile=$APP_DIR/.env
 ExecStart=$NODE_BIN app.js
 Restart=on-failure
 RestartSec=5
